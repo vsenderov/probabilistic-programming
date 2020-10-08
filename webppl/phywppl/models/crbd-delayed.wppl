@@ -1,0 +1,357 @@
+/**
+ * @file Constant-Rate Βirth-Death Model with Delayed Sampling
+ *
+ * λ is not sampled directly but instead delayed
+ *
+ *  - λ is represented by two parameters k and θ
+ *  - every time exponential(λ) needs to be sampled, the lomax
+ *    distribution is used instead and k and θ are updated
+ */
+
+
+/**
+ * Delayed Sampling of Waiting Time Exponential
+ * @return object
+ *   t: waiting time
+ *   k: updated proposal for k
+ *   theta: updated proposal for theta
+ */
+
+var delayed_sample = function(k, theta)
+{
+    var t = lomax(1/theta, k)
+    
+    return (
+	{
+	    t: t,
+	    k: update_k(k),
+	    theta: update_theta(theta, t)
+	}
+    )
+}
+
+
+/**
+ * Observe From Exponential Delayed
+ * @return object
+ *   prob: pdf evaluated at x
+ *   k: new proposal for k 
+ *   theta: new proposal for theta
+ */
+var delayed_observe = function(x, k, theta)
+{
+    return (
+	{
+	    prob: lomax_pdf(x, 1/theta, k),
+	    k : update_k(k),
+	    theta: update_theta(theta, x)
+	}
+    )
+}
+
+
+/**
+ * Update Proposal for k
+ */
+var update_k = function(k)
+{
+    return (k + 1)
+}
+
+
+/**
+ * Update Proposal for θ
+ * 
+ * @param theta the previous theta
+ * @param t the sampled waiting time 
+ */
+var update_theta = function(theta, t)
+{
+    return (theta/(1 + t*theta))
+}
+
+
+/**
+ * Samples from Lomax Using Inverse CDF
+ * 
+ * @param lambda parameter of the lomax distribution
+ * @param alpha parameter of the lomax distribution
+ */
+var lomax = function(lambda, alpha)
+{
+    var u = uniform(
+	{
+	    a: 0,
+	    b: 1
+	}
+    )
+    
+     return (lambda*(Math.pow(u, -1.0/alpha) - 1.0))
+}
+
+
+/**
+ * Log Density of lomax at x
+ */ 
+var lomax_pdf = function(x, lambda, alpha)
+{
+
+    return (Math.log(alpha) - Math.log(lambda) - (alpha + 1)*Math.log(1 + x/lambda))
+
+}
+
+
+
+/** 
+ * M Iterations to Survive
+ *  
+ * Computes M, the number of simulations needed to generate a lineage surviving
+ * to the present.
+ *
+ * @param startTime
+ * @param k parameter that represents lambda
+ * @param theta parameter that represents mu
+ * @param mu
+ * @param rho
+ * @param max_M (integer) A guard against very deep recursions.
+ *
+ * @return M
+ */ 
+var M_crbdGoesUndetected_delayed = function( startTime, k_lambda, theta_lambda, mu, rho, max_M )
+{
+    if ( max_M == 0 ) return NaN
+    // We need to survive twice
+    // !crbdGoesUndetected is the probability of being detected/surviving to present
+    var ret_0 = crbdGoesUndetected_delayed( startTime, k_lambda, theta_lambda, mu, rho)
+    var left_detection = !ret_0.result     
+    
+    var ret_1 = crbdGoesUndetected_delayed( startTime, ret_0.k_lambda, ret_1.k_theta, mu, rho)
+    var right_detection  = !ret_1.result
+    
+    if (left_detection && right_detection) {
+	return (
+	    {
+		M: 1,
+		k_lambda : ret_1.k_lambda,
+		theta_lambda : ret_1.theta_lambda
+	    }
+	)
+    } else {
+	
+	var ret_2  = M_crbdGoesUndetected_delayed(startTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho, max_M - 1)
+	
+	return (
+	    {
+		M : 1+ret_2.M,
+		k_lambda : ret_2.k_lambda,
+		theta_lambda : ret_2.theta_lambda
+	    }
+	)
+    }
+}
+
+/**
+ * Forward simulation from startTime to the present under CRBD
+ *
+ * Computes whether, under the CRBD model, an evolutionary lineage
+ * goes undetected, i.e. goes extinct or does not go extinct, but it 
+ * is not sampled under the random sampling procedure with probability ρ. 
+ * 
+ * @param startTime
+ * @param k_lambda
+ * @param k_theta
+ * @param mu
+ * @param rho
+ * 
+ * @return object
+ *     result: [extinction or not being detected (true)] or [survival and being detected (false)]
+ *     k_lambda : the new k
+ *     theta_lambda: the theta for lambda
+       
+ */ 
+var crbdGoesUndetected_delayed = function(startTime, k_lambda, k_theta, mu, rho) {				
+    var ret_0 = delayed_sample(k_lambda, k_theta)
+    
+    var t_lambda = ret_0.t
+    var t_mu = exponential({a: mu})
+    
+    // var t = exponential( {a: lambda + mu} );
+    var t = Math.min(t_lambda, t_mu)
+    
+    var currentTime = startTime - t
+
+    if (currentTime < 0) {
+    	if (flip(rho)) return (
+    	    {
+    		result: false,
+    		k_lambda: ret_0.k,
+    		theta_lambda: ret_0.theta
+    	    }
+    	)
+        else return (
+    	    {
+    		result: true,
+    		k_lambda: ret_0.k,
+    		theta_lambda: ret_0.theta
+    	    }
+    	)
+    }
+    
+    //    var speciation = flip( lambda/(lambda+mu) )
+    var speciation = (t_lambda < t_mu) 
+    
+    if ( !speciation ) return (
+    	    {
+    		result: true,
+    		k_lambda: ret_0.k,
+    		theta_lambda: ret_0.theta
+    	    }
+    	)
+    
+    var ret_1 = crbdGoesUndetected_delayed(currentTime, ret_0.k_lambda, ret_0.theta_lambda, mu, rho) // wlog left tree
+    var ret_2 = crbdGoesUndetected_delayed(currentTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho)
+    
+    return {
+    	result: ret_1.result && ret_2.result,
+    	k_lambda: ret_2.k_lambda,
+    	theta_lambda: ret_2.theta_lambda
+    }
+    
+}
+
+
+/**
+ * Simulate constant rate birth-death (CRBD) model
+ * 
+ * Simulates a particle under the CRBD model and weighs the simulation according
+ * to the probability endorsed by the input parameters. Since this is a probabil-
+ * istic simulation, even with the same input parameters the weight may vary.
+ *
+ * @param tree
+ * @param lambda
+ * @param mu
+ * @param rho
+ *
+ * @return Returns [lambda, mu] but technically no need to do so.
+ */ 
+var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
+{
+    
+    // Simulate process along a branch
+    // This function simulates speciation events on a branch
+    // that is known to survive through the timeperiod and
+    // computes the ln probability of the simulation.
+    var simBranch = function( startTime, stopTime, k_lambda, theta_lambda, mu, rho )
+    {
+	// Draw a waiting time until next speciation
+	var ret_0 = delayed_sample(k_lambda, theta_lambda)
+
+	var t = ret_0.t
+	
+	// Compute current time
+	var currentTime = startTime - t;
+
+	// If we pass the tip, we return
+	// This is the terminating condition, no probability accumulated yet
+	if ( currentTime <= stopTime ) return (
+	    {
+		prob: 0.0,
+		k_lambda: ret_0.k_lambda,
+		theta_lambda: ret_0.theta_lambda
+	    }
+	)
+	
+	// We need a speciation followed by one extinction and
+	// one survival (the branch we are on). We account for
+	// this with one simulation that is conditioned on
+	// extinction, for the side branch, and a factor of 2
+	// to account for the two possible rotations of lineages
+	// after the speciation event, that is, we do not care
+	// whether we survive on the left or the right branch,
+	// as long as the other branch dies out.
+	var ret_1 = crbdGoesUndetected_delayed( currentTime, ret_0.k_lambda, ret_0.theta_lambda, mu, rho )
+	// TODO this is not very logical, need to rewrite it
+	var sideDetection = ret_1.result
+	if ( sideDetection == false )
+            return (
+		{
+		    prob: -Infinity,
+		    k_lambda: ret_1.k_lambda,
+		    theta_lamnda: ret_1.theta_lambda
+		})
+
+	var ret_2 = simBranch( currentTime, stopTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho ) 
+	
+	return ({
+	    prob: ret_2.prob + Math.log(2.0),
+	    k_lambda: ret_2.k_lambda,
+	    theta_lambda: ret_2.theta_lambda
+	})
+    }
+    
+
+    
+    // Simulate process along tree
+    var simTree = function( tree, parent, k_lambda, theta_lambda, mu, rho)
+    {
+	// Factor in the probability of no extinction
+	// along the branch leading to the node
+	var lnProb1 = - mu * ( parent.age - tree.age );
+
+
+	var ret_0 = delayed_observe(0, k_lambda, k_theta)
+	var lnProb2 = ret_0.prob
+	
+	// If this is an interior node, we also need to weight
+	// according to the speciation probability
+	// at the end of the branch because we need to
+	// draw exactly the waiting time until the end
+	// of the branch. Note that this effect does
+	// not occur if the branch is terminal
+	//var lnProb2 = ( tree.type == 'node' ? Math.log( lambda ) : Math.log(rho) );
+
+	// Now simulate the hidden speciation events along
+	// the branch using a recursive function, accumulating ln probs
+	var ret_1 = simBranch( parent.age, tree.age, ret_0.k, ret_0.theta, mu, rho);
+	var lnProb3 = ret_1.prob
+
+	// Now is the time to reweight
+	factor( lnProb1 + lnProb2 + lnProb3 )
+
+	// Finally, if this is an interior node, recurse over
+	// the two descendant subtrees
+	if ( tree.type == 'node')
+	{
+            // Now recurse over the left and right descendants
+	    var ret_2 = simTree( tree.left,  tree, ret_1.k_lambda, ret_1.theta_lambda, mu, rho)
+	    var ret_3 = simTree( tree.right, tree, ret_2.k_lambda, ret_2.theta_lambda, mu, rho)
+	}
+
+	return (
+	    {
+		k_lambda: ret_3.k_lambda,
+		theta_lambda: ret_3.theta_lambda
+	    }
+	)
+    }
+
+
+    // Convert to density on labelled unoriented trees up front
+    // to make sure the normalization constant is correct
+    var numLeaves = phyjs.countLeaves( tree )
+    var corrFactor = ( numLeaves - 1 ) * Math.log( 2.0 ) - phyjs.lnFactorial( numLeaves )
+    factor( corrFactor )
+
+    // Simulate conditionally on the tree
+    // If clause is needed to exclude stalked tree
+    var ret_0 = simTree( tree.left,  tree, k_lambda, theta_lambda, mu, rho )
+    var ret_1 = simTree( tree.right, tree, ret_0.k_lambda, ret_0.theta_lambda, mu, rho )
+
+    return ret_1
+}
+
+
+
+
+
+

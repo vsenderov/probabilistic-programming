@@ -1,0 +1,83 @@
+///////////////////////////////////////////////////////////////////////
+
+var k_lambda = 1000
+var k_theta = 0.0001
+
+var model = function()
+{
+    var lambda = gamma({
+      shape: k_lambda,
+      scale: k_theta
+    }) // lambda is sampled immediately
+
+    // var t1 = exponential({a: lambda})
+    observe(Exponential({a: lambda}), 10)
+    return lambda
+}
+
+ var model_delayed = function()
+ {
+     var ret_0 = delayed_observe(10, k_lambda, k_theta)
+     factor( ret_0.prob)
+     //var ret_0 = delayed_sample(k_lambda, k_theta)
+     return gamma({
+       shape: ret_0.k,
+       scale: ret_0.theta
+     })
+ }
+ 
+var model_waiting_time = function()
+{
+  var lambda = gamma({
+      shape: k_lambda,
+      scale: k_theta
+    }) // lambda is sampled immediately
+
+  return exponential({
+    a: lambda
+  })
+}
+
+var model_waiting_time_delayed = function()
+{
+  var ret_0 = delayed_sample(k_lambda, k_theta)
+  return ret_0.t
+}
+
+var dist = Infer({
+    method: 'SMC',
+    particles: 20000,
+    model: model
+})
+
+var dist_delayed = Infer({
+    method: 'SMC',
+    particles: 20000,
+    model: model_delayed
+})
+
+var dist_waiting_time = Infer({
+    method: 'SMC',
+    particles: 20000,
+    model: model_waiting_time
+})
+
+var dist_waiting_time_delayed = Infer({
+    method: 'SMC',
+    particles: 20000,
+    model: model_waiting_time_delayed
+})
+
+
+
+//sample(dist)
+console.log("Immediate sampling log Z:", dist.normalizationConstant)
+//viz(dist)
+console.log("Delayed sampling log Z:", dist_delayed.normalizationConstant)
+//viz(dist_delayed)
+
+console.log("Immediate sampling (waiting time) log Z:", dist_waiting_time.normalizationConstant)
+//viz(dist_waiting_time)
+
+console.log("Delayed sampling (waiting time) log Z:", dist_waiting_time_delayed.normalizationConstant)
+//viz(dist_waiting_time_delayed)

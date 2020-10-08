@@ -19,7 +19,8 @@
          "models/crbd-analytical-complete-sampling.wppl",
          "models/lsbds.wppl",
           "models/tdbd.wppl",
-	  "models/tdbd-analytical.wppl"
+	  "models/tdbd-analytical.wppl",
+	  "models/crbd-delayed.wppl"
       ]
    },
    "scripts": {
