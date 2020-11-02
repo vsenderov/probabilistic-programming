@@ -33,15 +33,22 @@ var model_waiting_time = function()
       scale: k_theta
     }) // lambda is sampled immediately
 
-  return exponential({
+  var t1 = exponential({
     a: lambda
   })
+  
+  var t2 = exponential({
+    a: lambda
+  })
+  
+  return (t1 + t2)
 }
 
 var model_waiting_time_delayed = function()
 {
   var ret_0 = delayed_sample(k_lambda, k_theta)
-  return ret_0.t
+  var ret_1 = delayed_sample(ret_0.k, ret_0.theta)
+  return (ret_0.t + ret_1.t)
 }
 
 var dist = Infer({
@@ -72,12 +79,12 @@ var dist_waiting_time_delayed = Infer({
 
 //sample(dist)
 console.log("Immediate sampling log Z:", dist.normalizationConstant)
-//viz(dist)
+viz(dist)
 console.log("Delayed sampling log Z:", dist_delayed.normalizationConstant)
-//viz(dist_delayed)
+viz(dist_delayed)
 
 console.log("Immediate sampling (waiting time) log Z:", dist_waiting_time.normalizationConstant)
-//viz(dist_waiting_time)
+viz(dist_waiting_time)
 
 console.log("Delayed sampling (waiting time) log Z:", dist_waiting_time_delayed.normalizationConstant)
-//viz(dist_waiting_time_delayed)
+viz(dist_waiting_time_delayed)

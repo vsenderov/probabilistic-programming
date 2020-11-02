@@ -4,7 +4,7 @@
  * λ is not sampled directly but instead delayed
  *
  *  - λ is represented by two parameters k and θ
- *  - every time exponential(λ) needs to be sampled, the lomax
+ \*  - every time exponential(λ) needs to be sampled, the lomax
  *    distribution is used instead and k and θ are updated
  */
 
@@ -19,6 +19,7 @@
 
 var delayed_sample = function(k, theta)
 {
+   // console.log("delayed sample")
     var t = lomax(1/theta, k)
     
     return (
@@ -40,6 +41,7 @@ var delayed_sample = function(k, theta)
  */
 var delayed_observe = function(x, k, theta)
 {
+    // console.log("delayed_observe")
     return (
 	{
 	    prob: lomax_pdf(x, 1/theta, k),
@@ -164,31 +166,66 @@ var M_crbdGoesUndetected_delayed = function( startTime, k_lambda, theta_lambda, 
  * @param rho
  * 
  * @return object
- *     result: [extinction or not being detected (true)] or [survival and being detected (false)]
- *     k_lambda : the new k
- *     theta_lambda: the theta for lambda
+ *     result: true if extinct or not detected, false if survives and  detected
+ *     k_lambda : the new k for lambda
+ *     theta_lambda: the new theta for lambda
        
  */ 
-var crbdGoesUndetected_delayed = function(startTime, k_lambda, k_theta, mu, rho) {				
-    var ret_0 = delayed_sample(k_lambda, k_theta)
-    
+var crbdGoesUndetected_delayed = function(startTime, k_lambda, theta_lambda, mu, rho)
+{
+    // Sample a waiting time, ret_0.t, from the distribution of λ (delayed)
+    var ret_0 = delayed_sample(k_lambda, theta_lambda)
     var t_lambda = ret_0.t
+
+    // Sample waiting time from the distribution of μ immediately
     var t_mu = exponential({a: mu})
+
+    // Guard 1/2
+    // If t_lambda is significantly smaller than t_mu,
+    // then we have "excessive net diversification"
+    // if (t_lambda/t_mu < 0.01) {		
+    // 	return ({
+    // 	    result: false,
+    // 	    k_lambda: ret_0.k,
+    // 	    theta_lambda: ret_0.theta
+    // 	})
+    // }
+    // End Guard 1/2
     
-    // var t = exponential( {a: lambda + mu} );
+    // What is time until the next event?
     var t = Math.min(t_lambda, t_mu)
+
+    // What is the type of the next event?
+    var speciation = (t_lambda < t_mu) 
     
+    // Let time t pass
     var currentTime = startTime - t
 
+    // Are we in the future (currentTime < 0, as we count backwards)?
+    // If yes, the branch survives and is detected with probability ρ,
+    // i.e. it is not detected (undetected) with probability 1 - ρ
     if (currentTime < 0) {
-    	if (flip(rho)) return (
+    	if (flip(1 - rho)) return (
+    	    {
+    		result: true,
+    		k_lambda: ret_0.k,
+    		theta_lambda: ret_0.theta
+    	    }
+    	)
+	else return (
     	    {
     		result: false,
     		k_lambda: ret_0.k,
     		theta_lambda: ret_0.theta
     	    }
     	)
-        else return (
+    }
+    
+    // Are we in the case of extinction?
+    // If yes, then the branch is as a colloraly undetected.
+    var extinction = !speciation
+    if (extinction) {
+	return ( 
     	    {
     		result: true,
     		k_lambda: ret_0.k,
@@ -196,27 +233,27 @@ var crbdGoesUndetected_delayed = function(startTime, k_lambda, k_theta, mu, rho)
     	    }
     	)
     }
-    
-    //    var speciation = flip( lambda/(lambda+mu) )
-    var speciation = (t_lambda < t_mu) 
-    
-    if ( !speciation ) return (
-    	    {
-    		result: true,
-    		k_lambda: ret_0.k,
-    		theta_lambda: ret_0.theta
-    	    }
-    	)
-    
-    var ret_1 = crbdGoesUndetected_delayed(currentTime, ret_0.k_lambda, ret_0.theta_lambda, mu, rho) // wlog left tree
+
+    // We must be in the case of speciation now. W.l.o.g processing left subtree
+    var ret_1 = crbdGoesUndetected_delayed(currentTime, ret_0.k, ret_0.theta, mu, rho)
+
+    // Has the left tree been detected?
+    // I.e. it is not undetected
+    var left_detection = !ret_1.result
+
+    // If it has been detected, then there is no need to process the right subtree.
+    // The whole lineage has been detected, i.e. it is _not_ undetected by virtue of
+    // the left subtree.
+    if (left_detection) {
+	return ret_1
+    }
+
+    // Now process the right subtree.
     var ret_2 = crbdGoesUndetected_delayed(currentTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho)
-    
-    return {
-    	result: ret_1.result && ret_2.result,
-    	k_lambda: ret_2.k_lambda,
-    	theta_lambda: ret_2.theta_lambda
-    }
-    
+
+    // The left subtree has not been detected, so whatever the return value of the right
+    // subtree simulation is, that must be returned.
+    return ret_2
 }
 
 
@@ -234,32 +271,45 @@ var crbdGoesUndetected_delayed = function(startTime, k_lambda, k_theta, mu, rho)
  *
  * @return Returns [lambda, mu] but technically no need to do so.
  */ 
-var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
+var simCRBD_delayed = function(tree, k_lambda, theta_lambda, mu, rho)
 {
-    
     // Simulate process along a branch
     // This function simulates speciation events on a branch
     // that is known to survive through the timeperiod and
     // computes the ln probability of the simulation.
     var simBranch = function( startTime, stopTime, k_lambda, theta_lambda, mu, rho )
     {
-	// Draw a waiting time until next speciation
+	// Drawing waiting time until next speciation
 	var ret_0 = delayed_sample(k_lambda, theta_lambda)
-
 	var t = ret_0.t
+	
+
+	// Delayed guard 2/2
+	// if (t < 0.00005) {		
+    	//     return ({
+    	// 	prob: 0.0,
+    	// 	k_lambda: ret_0.k,
+    	// 	theta_lambda: ret_0.theta
+    	//     })
+	// }
+	// End Delayed guard 2/2
+
 	
 	// Compute current time
 	var currentTime = startTime - t;
 
 	// If we pass the tip, we return
 	// This is the terminating condition, no probability accumulated yet
-	if ( currentTime <= stopTime ) return (
-	    {
-		prob: 0.0,
-		k_lambda: ret_0.k_lambda,
-		theta_lambda: ret_0.theta_lambda
-	    }
-	)
+	if ( currentTime <= stopTime ) {
+	    // console.log("returning from simBranch")
+	    return (
+		{
+		    prob: 0.0,
+		    k_lambda: ret_0.k,
+		    theta_lambda: ret_0.theta
+		}
+	    )
+	}
 	
 	// We need a speciation followed by one extinction and
 	// one survival (the branch we are on). We account for
@@ -269,21 +319,31 @@ var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
 	// after the speciation event, that is, we do not care
 	// whether we survive on the left or the right branch,
 	// as long as the other branch dies out.
-	var ret_1 = crbdGoesUndetected_delayed( currentTime, ret_0.k_lambda, ret_0.theta_lambda, mu, rho )
-	// TODO this is not very logical, need to rewrite it
-	var sideDetection = ret_1.result
-	if ( sideDetection == false )
+	// console.log("side branch simulation")
+	var ret_1 = crbdGoesUndetected_delayed( currentTime, ret_0.k, ret_0.theta, mu, rho )
+	// console.log("delayed side branch returned", ret_1)
+	// console.log(ret_1)
+	
+	var sideDetection = !ret_1.result
+	if ( sideDetection ) {
+	    // console.log("side branch survived", ret_1)
+	    // console.log(ret_1)
+	    // console.log("returning")
             return (
 		{
 		    prob: -Infinity,
 		    k_lambda: ret_1.k_lambda,
-		    theta_lamnda: ret_1.theta_lambda
-		})
-
-	var ret_2 = simBranch( currentTime, stopTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho ) 
+		    theta_lambda: ret_1.theta_lambda
+		}
+	    )
+	}
 	
+	// console.log("Recursion. k_λ = ", ret_1.k_lambda, "θ_λ = ", ret_1.theta_lambda) 
+	var ret_2 = simBranch( currentTime, stopTime, ret_1.k_lambda, ret_1.theta_lambda, mu, rho ) 
+	// console.log("recursion complete", ret_2)
+	var newprob = ret_2.prob + Math.log(2.0)
 	return ({
-	    prob: ret_2.prob + Math.log(2.0),
+	    prob: newprob,
 	    k_lambda: ret_2.k_lambda,
 	    theta_lambda: ret_2.theta_lambda
 	})
@@ -297,10 +357,8 @@ var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
 	// Factor in the probability of no extinction
 	// along the branch leading to the node
 	var lnProb1 = - mu * ( parent.age - tree.age );
-
-
-	var ret_0 = delayed_observe(0, k_lambda, k_theta)
-	var lnProb2 = ret_0.prob
+	
+	// console.log("lnProb2", lnProb2)
 	
 	// If this is an interior node, we also need to weight
 	// according to the speciation probability
@@ -310,12 +368,37 @@ var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
 	// not occur if the branch is terminal
 	//var lnProb2 = ( tree.type == 'node' ? Math.log( lambda ) : Math.log(rho) );
 
+	var observe_node = function(node_type, k, theta) {
+	    if(node_type == 'node') {
+		return (delayed_observe(0, k, theta))
+	    } else {
+		return ({
+		    prob: Math.log(rho),
+		    k: k,
+		    theta: theta
+		})
+	    }
+		
+	}
+
+	var ret_0 = observe_node(tree.type, k_lambda, theta_lambda)
+	var lnProb2 = ret_0.prob
+
+	
 	// Now simulate the hidden speciation events along
 	// the branch using a recursive function, accumulating ln probs
+	// console.log("invoking simBranch")
 	var ret_1 = simBranch( parent.age, tree.age, ret_0.k, ret_0.theta, mu, rho);
 	var lnProb3 = ret_1.prob
 
+	// console.log("lnProb3", lnProb3)
+	
+	// console.log("here", ret_1)
 	// Now is the time to reweight
+
+	//console.log(lnProb1, lnProb2, lnProb3)
+	//console.log("reweighting", lnProb1 + lnProb2 + lnProb3) 
+	
 	factor( lnProb1 + lnProb2 + lnProb3 )
 
 	// Finally, if this is an interior node, recurse over
@@ -325,12 +408,19 @@ var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
             // Now recurse over the left and right descendants
 	    var ret_2 = simTree( tree.left,  tree, ret_1.k_lambda, ret_1.theta_lambda, mu, rho)
 	    var ret_3 = simTree( tree.right, tree, ret_2.k_lambda, ret_2.theta_lambda, mu, rho)
-	}
 
+	    return (
+		{
+		    k_lambda: ret_3.k_lambda,
+		    theta_lambda: ret_3.theta_lambda
+		}
+	    )
+	}
+	// console.log("here 2")
 	return (
 	    {
-		k_lambda: ret_3.k_lambda,
-		theta_lambda: ret_3.theta_lambda
+		k_lambda: ret_1.k_lambda,
+		theta_lambda: ret_1.theta_lambda
 	    }
 	)
     }
@@ -344,7 +434,9 @@ var simCRBD_delayed = function( tree, k_lambda, theta_lambda, mu, rho )
 
     // Simulate conditionally on the tree
     // If clause is needed to exclude stalked tree
+    // console.log("left tree")
     var ret_0 = simTree( tree.left,  tree, k_lambda, theta_lambda, mu, rho )
+    // console.log("right tree")
     var ret_1 = simTree( tree.right, tree, ret_0.k_lambda, ret_0.theta_lambda, mu, rho )
 
     return ret_1

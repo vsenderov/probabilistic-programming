@@ -37,23 +37,21 @@ var model = function()
     // var mu = 0
 
     var rho    = 0.1
-    //var lambda = gamma( {shape:1, scale:1} )
+    var lambda = gamma( {shape:1, scale:1} )
     //var lambda = exponential( {a: 1} )
-    var lambda = 0.2
+    //var lambda = 0.2
     // var mu     = gamma( {shape:10, scale:0.01} )
     // var lambda = Math.exp(uniform( { a:Math.log(1e-2), b:Math.log(1e1) } ))
     //var epsilon = uniform( { a:0.0, b:1.0 } )
-    var epsilon = 0.5
-    var mu = epsilon*lambda
+    //var epsilon = 0.5
+    //var mu = epsilon*lambda
+    var mu  = 0.1
 
     // Simulate conditionally on the tree
     // It returns all variables of interest
     var ret = simCRBD( tree, lambda, mu, rho )
 
     // Condition on detection
-    //var dist = Infer ( { model: function() { crbdGoesUndetected( tree.age, lambda, mu, rho ) }, method: 'forward', samples: 100 } )
-    //factor( - 2.0 * dist.score( false ) )
-
     var max_M = 10000 // abort survivorship bias if recursion is too deep
     var M = M_crbdGoesUndetected( tree.age, lambda, mu, rho, max_M )
     factor(Math.log(M))
